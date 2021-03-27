@@ -19,8 +19,8 @@ pvxp_n = {"bin_width": 1,
           }
 
 mtw = {"bin_width": 5,
-       "numbins": 40,
-       "xmin": 0,
+       "numbins": 34,
+       "xmin": 30,
        "xmax": 200,
        "xlabel": "$M^W_T$, [GeV]",
        "xvariable": "mtw",
