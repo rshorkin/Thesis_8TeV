@@ -21,7 +21,7 @@ branches = ['eventNumber', 'runNumber', 'mcWeight',   # check for not needed
 
             'lep_n', 'lep_pt', 'lep_eta', 'lep_phi', 'lep_E', 'lep_type', 'lep_charge',
             'lep_ptcone30', 'lep_etcone20', 'lep_trackd0pvunbiased', 'lep_tracksigd0pvunbiased',
-            'lep_trigMatched', 'lep_z0', 'lep_flag',     # mb can delete
+            'lep_trigMatched', 'lep_z0', 'lep_flag',
 
             'alljet_n', 'jet_pt', 'jet_eta', 'jet_E', 'jet_phi', 'jet_m', 'jet_jvf', 'jet_MV1',  # check for un-needed
 

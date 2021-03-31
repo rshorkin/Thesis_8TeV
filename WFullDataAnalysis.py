@@ -259,5 +259,6 @@ def get_data_from_files():
         read_sample(s)
     return None
 
+
 get_data_from_files()
 

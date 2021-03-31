@@ -23,12 +23,14 @@ pandas.options.mode.chained_assignment = None
 
 lumi = 1  # 10 fb-1
 common_path = "../DataForFit_8TeV/"
+fraction = 1
 
 
 def read_file(path, sample, branches=branches):
     with uproot.open(path) as file:
         tree = file["FitTree"]
-        df = pandas.DataFrame.from_dict(tree.arrays(branches, library='np'))
+        numevents = tree.num_entries
+        df = pandas.DataFrame.from_dict(tree.arrays(branches, library='np', entry_stop=numevents * fraction))
     return df
 
 
@@ -188,6 +190,7 @@ def initial_fitter(data, sample, initial_parameters, obs):
     print(f'Fitting {sample} sample')
     df = data[sample]
     bgr_yield = len(df.index)
+    print(f'Total number of events: {bgr_yield}')
 
     mu = zfit.Parameter(f"mu_{sample}", initial_parameters[sample]['mu'], 40., 100.)
     sigma = zfit.Parameter(f'sigma_{sample}', initial_parameters[sample]['sigma'], 1., 100.)
@@ -200,50 +203,65 @@ def initial_fitter(data, sample, initial_parameters, obs):
     DCB = zfit.pdf.DoubleCB(obs=obs, mu=mu, sigma=sigma, alphal=alphal, nl=nl, alphar=alphar, nr=nr)
     DCB = DCB.create_extended(n_bgr)
 
-    mu_g = zfit.Parameter(f"mu_gauss_{sample}", 41., 40., 100.)
-    sigma_g = zfit.Parameter(f'sigma_gauss_{sample}', 8., 1., 100.)
-    low = zfit.Parameter(f'low_{sample}', 50., 30., 200.)
-    high = zfit.Parameter(f'high_{sample}', 100., 30., 200.)
-    ad_yield = zfit.Parameter(f'yield_gauss_{sample}', int(0.2 * bgr_yield), 0., int(1.3 * bgr_yield), step_size=1)
+    mu_g = zfit.Parameter(f"mu_CB_{sample}", 83., 40., 100.)
+    sigma_g = zfit.Parameter(f'sigma_CB_{sample}', 14., 1., 100.)
+    ad_yield = zfit.Parameter(f'yield_CB_{sample}', int(0.15 * bgr_yield), 0., int(1.3 * bgr_yield), step_size=1)
+    alphal = zfit.Parameter(f'alpha_CB_{sample}', 2.6, 0.001, 100.)
+    nl = zfit.Parameter(f'n_CB_{sample}', 13.4, 0.001, 400.)
+    alphar = zfit.Parameter(f'alphar_CB_{sample}', 0.6, 0.001, 100.)
+    nr = zfit.Parameter(f'nr_CB_{sample}', 2.4, 0.001, 400.)
 
-   # gauss = zfit.pdf.TruncatedGauss(mu=mu_g, sigma=sigma_g, low=low, high=high, obs=obs)
-   # gauss = gauss.create_extended(ad_yield)
+    gauss = zfit.pdf.CrystalBall(mu=mu_g, sigma=sigma_g, alpha=alphal, n=nl, obs=obs)
+    gauss = gauss.create_extended(ad_yield)
 
-   # model = zfit.pdf.SumPDF([DCB, gauss])
-    model = DCB
+    model = zfit.pdf.SumPDF([DCB, gauss])
 
     bgr_data = format_data(df, obs)
     # Create NLL
     nll = zfit.loss.ExtendedUnbinnedNLL(model=model, data=bgr_data)
     # Create minimizer
-    minimizer = zfit.minimize.Minuit(verbosity=0, use_minuit_grad=True, tolerance=0.001)
+    minimizer = zfit.minimize.Minuit(verbosity=0, use_minuit_grad=True, tolerance=0.1)
     result = minimizer.minimize(nll)
     if result.valid:
         print("Result is valid")
         print("Converged:", result.converged)
         # param_errors = result.hesse()
         print(result.params)
+        mu1 = zfit.run(mu)
+        mu2 = zfit.run(mu_g)
+        weight1 = zfit.run(bgr_yield)
+        weight2 = zfit.run(ad_yield)
+        mean_mu = (mu1 * weight1 + mu2 * weight2) / (weight2 + weight1)
+        avg_mu = (mu1 + mu2) / 2
+        print(mean_mu)
         if not model.is_extended:
             raise Warning('MODEL NOT EXTENDED')
-        return model
+        return model, [mean_mu, avg_mu, mu1, mu2]
     else:
         print('Minimization failed')
         print(result.params)
-        return model
+        mu1 = zfit.run(mu)
+        mu2 = zfit.run(mu_g)
+        weight1 = zfit.run(bgr_yield)
+        weight2 = zfit.run(ad_yield)
+        mean_mu = (mu1 * weight1 + mu2 * weight2) / (weight2 + weight1)
+        avg_mu = (mu1 + mu2) / 2
+        print(mean_mu)
+        return model, [mean_mu, avg_mu, mu1, mu2]
 
 
 # Plotting
 
-def plot_fit_result(models, data, obs, sample='data'):
+def plot_fit_result(models, data, obs, sample='data', x=[80.]):
     plt_name = "mtw"
     print(f'Plotting {sample}')
 
     lower, upper = obs.limits
 
-    h_bin_width = hist_dicts[plt_name]["bin_width"]
-    h_num_bins = hist_dicts[plt_name]["numbins"]
-    h_xmin = hist_dicts[plt_name]["xmin"]
-    h_xmax = hist_dicts[plt_name]["xmax"]
+    h_bin_width = 5
+    h_num_bins = 26
+    h_xmin = 30
+    h_xmax = 160
     h_xlabel = hist_dicts[plt_name]["xlabel"]
     plt_label = "$W \\rightarrow l\\nu$"
 
@@ -262,8 +280,10 @@ def plot_fit_result(models, data, obs, sample='data'):
     hep.histplot(main_axes.hist(data.mtw, bins=bins, log=False, facecolor="none", weights=data.totalWeight.values),
                  color="black", yerr=True, histtype="errorbar", label=sample)
 
-    main_axes.set_xlim(h_xmin, h_xmax)
+    main_axes.set_xlim(lower[-1][0], upper[0][0])
     main_axes.set_ylim(0., 1.4 * max(data_x))
+    # for point in x:
+       # plt.axvline(point)
     main_axes.xaxis.set_minor_locator(AutoMinorLocator())
     main_axes.set_xlabel(h_xlabel)
     main_axes.set_title("W Transverse Mass Fit")
@@ -278,6 +298,10 @@ def plot_fit_result(models, data, obs, sample='data'):
         else:
             main_axes.plot(x_plot, model.pdf(x_plot) * plot_scale, label=model_name)
             print('Model is not extended')
+        y_plot = model.ext_pdf(x_plot)
+        y_plot = y_plot.numpy().tolist()
+        x_index = y_plot.index(max(y_plot))
+        plt.axvline(x_plot[x_index], color='red')
     main_axes.legend(title=plt_label, loc="best")
     plt.savefig(f"../Results_8TeV/{sample}_fit_{plt_name}_Complex.jpg")
     plt.close()
@@ -288,9 +312,6 @@ def plot_component(dfs, component):
     print("Started plotting")
 
     plot_label = "$W \\rightarrow l\\nu$"
-    signal_label = "Signal $W$"
-
-    signal = None
     hist = hist_dicts['mtw']
 
     h_bin_width = hist["bin_width"]
@@ -327,14 +348,14 @@ data = get_data_from_files()
 # for sample in ["diboson", "Z", "ttbar", "single top", "W", 'DrellYan']:
 # plot_component(data, sample)
 
-obs = zfit.Space('mtw', limits=(30, 200))
+obs = zfit.Space('mtw', limits=(30, 160))
 initial_parameters = {'diboson': {'mu': 80., 'sigma': 18., 'nl': 1., 'alphal': 1.3, 'nr': 90., 'alphar': 0.9},
                       'ttbar': {'mu': 77., 'sigma': 21., 'nl': 100., 'alphal': 0.1, 'nr': 10., 'alphar': 1.4},
                       'single top': {'mu': 80., 'sigma': 16., 'nl': 2., 'alphal': 0.6, 'nr': 110., 'alphar': 1.},
                       'Z': {'mu': 73., 'sigma': 16., 'nl': 2., 'alphal': 0.6, 'nr': 110., 'alphar': 1.},
                       'DrellYan': {'mu': 62.5, 'sigma': 16., 'nl': 2., 'alphal': 0.6, 'nr': 110., 'alphar': 1.},
-                      'W': {'mu': 80., 'sigma': 16., 'nl': 2., 'alphal': 0.6, 'nr': 110., 'alphar': 1.},
+                      'W': {'mu': 77., 'sigma': 16., 'nl': 14., 'alphal': 1.5, 'nr': 10., 'alphar': 1.3},
                       'data': {'mu': 80., 'sigma': 16., 'nl': 2., 'alphal': 0.6, 'nr': 110., 'alphar': 1.}}
 
-model = initial_fitter(data, 'W', initial_parameters, obs)
-plot_fit_result({'W': model}, data['W'], obs, sample='W')
+model, x = initial_fitter(data, 'data', initial_parameters, obs)
+plot_fit_result({'data': model}, data['data'], obs, sample='data', x=x)
