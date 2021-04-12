@@ -4,6 +4,7 @@ import pandas
 import math
 import uproot
 import time
+from multiprocessing import Process
 
 import concurrent.futures
 
@@ -20,14 +21,14 @@ from WHistograms import hist_dicts
 import types
 import uproot3_methods.classes.TH1
 
-branches = ['eventNumber', 'runNumber', 'mcWeight',   # check for not needed
+branches = ['eventNumber', 'runNumber', 'mcWeight',  # check for not needed
             'passGRL', 'hasGoodVertex', 'trigE', 'trigM',
             'scaleFactor_PILEUP', 'scaleFactor_ELE', 'scaleFactor_MUON', 'scaleFactor_TRIGGER', 'scaleFactor_ZVERTEX',
             'vxp_z', 'pvxp_n',
 
             'lep_n', 'lep_pt', 'lep_eta', 'lep_phi', 'lep_E', 'lep_type', 'lep_charge',
             'lep_ptcone30', 'lep_etcone20', 'lep_trackd0pvunbiased', 'lep_tracksigd0pvunbiased',
-            'lep_trigMatched', 'lep_z0', 'lep_flag',     # mb can delete
+            'lep_trigMatched', 'lep_z0', 'lep_flag',  # mb can delete
 
             'alljet_n', 'jet_pt', 'jet_eta', 'jet_E', 'jet_phi', 'jet_m', 'jet_jvf', 'jet_MV1',  # check for un-needed
 
@@ -36,9 +37,8 @@ branches = ['eventNumber', 'runNumber', 'mcWeight',   # check for not needed
 
 pandas.options.mode.chained_assignment = None
 
-
 lumi = 1  # 10 fb-1
-fraction = .05
+fraction = .5
 common_path = "/media/sf_Shared/data_8TeV/"
 # save_choice = int(input("Save dataframes? 0 for no, 1 for yes\n")) todo
 save_choice = 0
@@ -75,6 +75,49 @@ def abs_value(x):
     return abs(x)
 
 
+def calc_W_phi(lep_pt, met_et, lep_phi, met_phi):
+    px_lep = lep_pt * np.cos(lep_phi)
+    px_nu = met_et * np.cos(met_phi)
+    py_lep = lep_pt * np.sin(lep_phi)
+    py_nu = met_et * np.sin(met_phi)
+
+    if np.sqrt((px_nu + px_lep) ** 2 + (py_lep + py_nu) ** 2) != 0:
+        if px_nu + px_lep >= 0:
+            sin_W_phi = (py_lep + py_nu) / np.sqrt((px_nu + px_lep) ** 2 + (py_lep + py_nu) ** 2)
+            W_phi = np.arcsin(sin_W_phi)
+        else:
+            sin_W_phi = (py_lep + py_nu) / np.sqrt((px_nu + px_lep) ** 2 + (py_lep + py_nu) ** 2)
+            W_phi = np.pi * math.copysign(1., np.arcsin(sin_W_phi)) - np.arcsin(sin_W_phi)
+    else:
+        if lep_pt > met_et:
+            W_phi = lep_phi
+        elif lep_pt < met_et:
+            W_phi = met_phi
+        else:
+            W_phi = None
+
+    del px_nu, py_nu, px_lep, py_lep
+    return W_phi
+
+
+def calc_delta_phi(phi_1, phi_2):
+    if phi_1 - phi_2 > math.pi:
+        return phi_1 - phi_2 - 2 * math.pi
+    elif phi_1 - phi_2 < -math.pi:
+        return phi_1 - phi_2 + 2 * math.pi
+    else:
+        return phi_1 - phi_2
+
+
+def find_lead_jet(pt, y):
+    max_pt = max(pt)
+    index = np.where(pt == max_pt)
+    if not len(y[index]) > 1:
+        return y[index]
+    else:
+        return y[index][0]
+
+
 def calc_weight(mcWeight, scaleFactor_ELE, scaleFactor_MUON,
                 scaleFactor_PILEUP, scaleFactor_TRIGGER, scaleFactor_ZVERTEX):
     return mcWeight * scaleFactor_ELE * scaleFactor_MUON * \
@@ -89,7 +132,6 @@ def read_file(path, sample, branches=branches):
     print(f'Available Memory: {mem_at_start:.0f} MB')
     count = 0
     hists = {}
-    executor = concurrent.futures.ThreadPoolExecutor(4)
     start = time.time()
     batch_num = 0
     with uproot.open(path) as file:
@@ -97,9 +139,7 @@ def read_file(path, sample, branches=branches):
         numevents = tree.num_entries
         print(f'Total number of events in file: {numevents}')
 
-        for batch in tree.iterate(branches, step_size='30 MB', library='np',
-                                  decompression_executor=executor,
-                                  interpretation_executor=executor):
+        for batch in tree.iterate(branches, step_size='30 MB', library='np'):
             print('==============')
             df = pandas.DataFrame.from_dict(batch)
             del batch
@@ -147,6 +187,11 @@ def read_file(path, sample, branches=branches):
             df['met_et'] = df['met_et'] / 1000
             df['mtw'] = df['mtw'] / 1000
 
+            df['mtw_enu'] = df.query('lep_type == 11')['mtw']
+            df['mtw_munu'] = df.query('lep_type == 13')['mtw']
+
+            df['WT_phi'] = np.vectorize(calc_W_phi)(df.lep_pt, df.met_et, df.lep_phi, df.met_phi)
+
             df['jet_n'] = df['alljet_n']
             df.drop(['alljet_n'], axis=1, inplace=True)
 
@@ -162,6 +207,40 @@ def read_file(path, sample, branches=branches):
 
             df['neg_mu_eta'] = df.query('lep_type == 13 and lep_charge == -1')['lep_eta']
             df['neg_mu_eta'] = np.vectorize(abs_value)(df.neg_mu_eta)
+
+            df['lep_pt_j0'] = df.query('jet_n == 0')['lep_pt']
+            df['lep_pt_j1'] = df.query('jet_n == 1')['lep_pt']
+            df['lep_pt_j2'] = df.query('jet_n > 1')['lep_pt']
+
+            df['mtw_j0'] = df.query('jet_n == 0')['mtw']
+            df['mtw_j1'] = df.query('jet_n == 1')['mtw']
+            df['mtw_j2'] = df.query('jet_n > 1')['mtw']
+
+            df['met_et_j0'] = df.query('jet_n == 0')['met_et']
+            df['met_et_j1'] = df.query('jet_n == 1')['met_et']
+            df['met_et_j2'] = df.query('jet_n > 1')['met_et']
+
+            df['lep_eta_j0'] = df.query('jet_n == 0')['lep_eta']
+            df['lep_eta_j1'] = df.query('jet_n == 1')['lep_eta']
+            df['lep_eta_j2'] = df.query('jet_n > 1')['lep_eta']
+
+            if len(df.loc[df['jet_n'] > 0].index) > 0:
+                temp_df = pandas.DataFrame()
+                temp_df['eventNumber'] = df.loc[df['jet_n'] > 0]['eventNumber']
+                for column in df.columns:
+                    if 'jet' in column and column != 'jet_n':
+                        temp_df[f'lead_{column}'] = np.vectorize(find_lead_jet)(df.loc[df['jet_n'] > 0]['jet_pt'],
+                                                                                df.loc[df['jet_n'] > 0][column])
+                temp_df['lead_jet_pt'] = temp_df['lead_jet_pt'] / 1000.
+
+                temp_df['lj_phi_diff'] = np.vectorize(calc_delta_phi)(df.loc[df['jet_n'] > 0]['lep_phi'],
+                                                                      temp_df['lead_jet_phi'])
+                temp_df['abs_lj_phi_diff'] = np.vectorize(abs_value)(temp_df.lj_phi_diff)
+
+                temp_df['Wj_phi_diff'] = np.vectorize(calc_delta_phi)(df.loc[df['jet_n'] > 0]['WT_phi'],
+                                                                      temp_df['lead_jet_phi'])
+                temp_df['abs_Wj_phi_diff'] = np.vectorize(abs_value)(temp_df.Wj_phi_diff)
+                df = pandas.merge(left=df, right=temp_df, left_on='eventNumber', right_on='eventNumber', how='left')
 
             num_after_cuts = len(df.index)
             print("Number of events after cuts: {0}".format(num_after_cuts))
@@ -243,16 +322,17 @@ def read_sample(sample):
     return None
 
 
-def get_data_from_files():
+def get_data_from_files(switch=0):
     data = {}
     # switch = int(input("What do you want to analyze? 0 for all, 1 for data, 2 for MC\n")) todo
-    switch = 0
     if switch == 0:
-        samples = ["data", "diboson", "ttbar", "Z", "single top", "W", 'DrellYan']
-    elif switch == 1:
         samples = ["data"]
+    elif switch == 1:
+        samples = ['W']
     elif switch == 2:
-        samples = ["diboson", "ttbar", "Z", "single top", "W", 'DrellYan']
+        samples = ["diboson", "ttbar"]
+    elif switch == 3:
+        samples = ["Z", "single top",  'DrellYan']
     else:
         raise ValueError("Option {0} cannot be processed".format(switch))
     for s in samples:
@@ -260,5 +340,16 @@ def get_data_from_files():
     return None
 
 
-get_data_from_files()
+def runInParallel(*fns):
+    proc = []
+    i = 0
+    for fn in fns:
+        p = Process(target=fn, args=(i,))
+        p.start()
+        proc.append(p)
+        i += 1
+    for p in proc:
+        p.join()
 
+
+runInParallel(get_data_from_files, get_data_from_files, get_data_from_files, get_data_from_files)
