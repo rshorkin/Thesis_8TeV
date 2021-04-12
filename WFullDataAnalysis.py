@@ -184,6 +184,7 @@ def read_file(path, sample, branches=branches):
 
             # Convert MeV to GeV
             df['lep_pt'] = df['lep_pt'] / 1000
+            df['lep_E'] = df['lep_E'] / 1000
             df['met_et'] = df['met_et'] / 1000
             df['mtw'] = df['mtw'] / 1000
 
