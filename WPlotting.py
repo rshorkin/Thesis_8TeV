@@ -147,8 +147,16 @@ def plot_histogram(hist_name, scale='linear'):
                    alpha=0.5, color='none',
                    hatch="////", width=h_bin_width)
 
-    ratio_axes.set_ylim(0.0, 2.0)
-    ratio_axes.set_yticks([0.5, 1, 1.5])
+    if hist_name not in ('met_et_j0', 'lep_pt_j0') and 'mtw' not in hist_name:
+        ratio_axes.set_ylim(0.5, 1.5)
+        ratio_axes.set_yticks([0.75, 1, 1.25])
+    else:
+        ratio_axes.set_ylim(0.0, 2.0)
+        ratio_axes.set_yticks([0.5, 1, 1.5])
+        y_ticks = ratio_axes.yaxis.get_major_ticks()
+        # y_ticks[0].label1.set_visible(False)
+    ratio_axes.set_xlim(h_xmin, h_xmax)
+    ratio_axes.xaxis.set_minor_locator(AutoMinorLocator())
     y_ticks = ratio_axes.yaxis.get_major_ticks()
     # y_ticks[0].label1.set_visible(False)
     ratio_axes.set_xlim(h_xmin, h_xmax)
@@ -163,13 +171,13 @@ def plot_histogram(hist_name, scale='linear'):
              fontsize=20)
     plt.text(0.05, 0.9, r'$\sqrt{s}=8\,\mathrm{TeV},\;\int\, L\,dt=$' + lumi_used + '$\,\mathrm{fb}^{-1}$', ha="left",
              va="top", family='sans-serif', fontsize=16, transform=main_axes.transAxes)
-    plt.text(0.05, 0.78, plot_label, ha="left", va="top", family='sans-serif',
+    plt.text(0.05, 0.83, plot_label, ha="left", va="top", family='sans-serif',
              fontsize=14, transform=main_axes.transAxes)
     main_axes.set_ylabel(f"События / {h_bin_width} {y_units}")
     ratio_axes.set_ylabel("Данные/МК")
     ratio_axes.set_xlabel(h_xlabel)
     plt.grid("True", axis="y", color="black", linestyle="--")
-    plt.savefig(f'../Results_8TeV/{hist_name}.jpeg')
+    plt.savefig(f'../Results_8TeV/{hist_name}_{scale}.jpeg')
     return None
 
 
